@@ -225,7 +225,7 @@ function isConfigured() {
       scanBtn.disabled = true;
 
       await qr.start(
-        { facingMode: { ideal: 'environment' } },
+       { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         decodedText => {
           const code = String(decodedText || '').trim();
