@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>KVG - Kiểm kê tài sản</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: #111827;
+      background: #f3f4f6;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f3f4f6; }
+    .wrap { max-width: 680px; margin: auto; padding: 16px; }
+    .card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 18px;
+      padding: 18px;
+      margin-bottom: 14px;
+    }
+    h1 { font-size: 24px; margin: 0 0 6px; }
+    .sub { color: #6b7280; margin: 0 0 16px; }
+    label { display: block; font-weight: 600; margin: 12px 0 6px; }
+    input, button {
+      width: 100%;
+      font: inherit;
+      padding: 13px 14px;
+      border-radius: 12px;
+    }
+    input { border: 1px solid #cbd5e1; }
+    button {
+      border: 0;
+      background: #111827;
+      color: #fff;
+      font-weight: 700;
+      margin-top: 10px;
+      cursor: pointer;
+    }
+    button.secondary { background: #e5e7eb; color: #111827; }
+    button:disabled { opacity: .55; cursor: default; }
+    #reader { width: 100%; margin-top: 12px; overflow: hidden; border-radius: 14px; }
+    .result {
+      padding: 18px;
+      border-radius: 16px;
+      text-align: center;
+      margin-top: 14px;
+      border: 2px solid transparent;
+    }
+    .result .big { font-size: 30px; font-weight: 800; margin: 4px 0; }
+    .ok { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
+    .no { background: #fef2f2; color: #991b1b; border-color: #fca5a5; }
+    .warn { background: #fffbeb; color: #92400e; border-color: #fcd34d; }
+    .hidden { display: none; }
+    .muted { color: #6b7280; font-size: 14px; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    @media (max-width: 520px) { .row { display: block; } }
+  </style>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <section class="card">
+      <h1>KVG - Kiểm kê tài sản</h1>
+      <p class="sub">Quét QR → tìm mã trong cột A → cập nhật “Có” vào cột B.</p>
+
+      <button id="scanBtn">Mở camera quét QR</button>
+      <button id="stopBtn" class="secondary hidden">Dừng camera</button>
+      <div id="reader" class="hidden"></div>
+
+      <label for="assetCode">Hoặc nhập mã tài sản</label>
+      <div class="row">
+        <input id="assetCode" placeholder="Ví dụ: KVG-000001" autocomplete="off" autocapitalize="characters">
+        <button id="checkBtn">Kiểm kê</button>
+      </div>
+
+      <div id="result" class="result hidden" aria-live="polite">
+        <div id="resultTitle" class="big"></div>
+        <div id="resultCode"></div>
+        <div id="resultMsg" class="muted"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <strong>Cách hoạt động</strong>
+      <p class="muted">
+        Nếu mã QR trùng chính xác với mã ở cột A, ứng dụng ghi “Có” vào cột B cùng dòng.
+        Nếu không tìm thấy mã, Google Sheet không bị thay đổi.
+      </p>
+    </section>
+  </div>
+
+<script>
+  // DÁN URL /exec CỦA APPS SCRIPT WEB APP VÀO ĐÂY.
+  // Ví dụ: https://script.google.com/macros/s/AKfycb.../exec
+  const WEB_APP_URL = 'https://script.google.com/a/macros/khanhvinhgroup.com.vn/s/AKfycbxRO2tk7XQuhGGCY7CYK8oT12z3DZl1-F3eJfk2LsYfXKYoxpd3MAxivpuFZC4UwPBC/exec';
+
+  const scanBtn = document.getElementById('scanBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const checkBtn = document.getElementById('checkBtn');
+  const input = document.getElementById('assetCode');
+  const reader = document.getElementById('reader');
+
+  let qr = null;
+  let scanning = false;
+  let busy = false;
+  let lastScan = '';
+  let lastScanAt = 0;
+
+  function showResult(type, title, code, msg) {
+    const box = document.getElementById('result');
+    box.className = 'result ' + type;
+    document.getElementById('resultTitle').textContent = title;
+    document.getElementById('resultCode').textContent = code || '';
+    document.getElementById('resultMsg').textContent = msg || '';
+  }
+
+  function setBusy(on) {
+    busy = on;
+    checkBtn.disabled = on;
+  }
+
+  function isConfigured() {
+    return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/.test(WEB_APP_URL);
+  }
+
+  function callAppsScript(code) {
+    return new Promise((resolve, reject) => {
+      if (!isConfigured()) {
+        reject(new Error('Chưa cấu hình WEB_APP_URL trong file HTML.'));
+        return;
+      }
+
+      const callbackName = '__kvgCallback_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+      const script = document.createElement('script');
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('Apps Script không phản hồi. Kiểm tra URL deploy và quyền truy cập Web App.'));
+      }, 15000);
+
+      function cleanup() {
+        clearTimeout(timeout);
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      }
+
+      window[callbackName] = data => {
+        cleanup();
+        resolve(data);
+      };
+
+      script.onerror = () => {
+        cleanup();
+        reject(new Error('Không kết nối được Apps Script Web App.'));
+      };
+
+      const sep = WEB_APP_URL.includes('?') ? '&' : '?';
+      script.src = WEB_APP_URL + sep
+        + 'action=check'
+        + '&code=' + encodeURIComponent(code)
+        + '&callback=' + encodeURIComponent(callbackName)
+        + '&_=' + Date.now();
+
+      document.head.appendChild(script);
+    });
+  }
+
+  async function submitCode(code) {
+    code = String(code || '').trim();
+    if (!code || busy) return;
+
+    input.value = code;
+    setBusy(true);
+    showResult('warn', 'ĐANG KIỂM TRA...', code, 'Đang cập nhật Google Sheet.');
+
+    try {
+      const res = await callAppsScript(code);
+
+      if (!res || res.ok === false) {
+        showResult('no', 'LỖI', code, (res && res.message) || 'Apps Script trả về lỗi.');
+        return;
+      }
+
+      if (res.found) {
+        showResult(
+          res.alreadyChecked ? 'warn' : 'ok',
+          res.alreadyChecked ? 'ĐÃ CÓ' : 'CÓ',
+          res.code,
+          res.message + ' Dòng ' + res.row + '.'
+        );
+      } else {
+        showResult('no', 'KHÔNG', res.code || code, res.message);
+      }
+    } catch (err) {
+      showResult('no', 'LỖI', code, err && err.message ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startScan() {
+    if (scanning) return;
+
+    if (!window.isSecureContext && location.hostname !== 'localhost') {
+      showResult('no', 'CẦN HTTPS', '', 'Camera chỉ hoạt động trên trang HTTPS.');
+      return;
+    }
+
+    if (!isConfigured()) {
+      showResult('no', 'CHƯA CẤU HÌNH', '', 'Hãy dán URL /exec của Apps Script vào biến WEB_APP_URL trước khi đưa trang lên hosting.');
+      return;
+    }
+
+    reader.classList.remove('hidden');
+    stopBtn.classList.remove('hidden');
+    qr = new Html5Qrcode('reader');
+
+    try {
+      scanning = true;
+      scanBtn.textContent = 'Camera đang bật';
+      scanBtn.disabled = true;
+
+      await qr.start(
+        { facingMode: { ideal: 'environment' } },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        decodedText => {
+          const code = String(decodedText || '').trim();
+          const now = Date.now();
+
+          // Tránh cùng một QR bị đọc liên tục nhiều lần.
+          if (!code || busy || (code === lastScan && now - lastScanAt < 3000)) return;
+
+          lastScan = code;
+          lastScanAt = now;
+          submitCode(code);
+        },
+        () => {}
+      );
+    } catch (e) {
+      scanning = false;
+      qr = null;
+      reader.classList.add('hidden');
+      stopBtn.classList.add('hidden');
+      scanBtn.disabled = false;
+      scanBtn.textContent = 'Mở camera quét QR';
+      showResult('no', 'KHÔNG MỞ ĐƯỢC CAMERA', '', e && e.message ? e.message : String(e));
+    }
+  }
+
+  async function stopScan() {
+    if (!qr) return;
+
+    try {
+      if (scanning) await qr.stop();
+    } catch (e) {}
+
+    try { await qr.clear(); } catch (e) {}
+
+    scanning = false;
+    qr = null;
+    reader.classList.add('hidden');
+    stopBtn.classList.add('hidden');
+    scanBtn.disabled = false;
+    scanBtn.textContent = 'Mở camera quét QR';
+  }
+
+  scanBtn.addEventListener('click', startScan);
+  stopBtn.addEventListener('click', stopScan);
+  checkBtn.addEventListener('click', () => submitCode(input.value));
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitCode(input.value);
+  });
+</script>
+</body>
+</html>
