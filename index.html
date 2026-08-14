@@ -169,6 +169,32 @@ function isConfigured() {
     });
   }
 
+
+  function playBeep() {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioContext();
+
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.value = 1400;
+
+      gain.gain.setValueAtTime(1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.3);
+      oscillator.onended = () => ctx.close();
+    } catch (e) {
+      console.log('Không phát được âm báo:', e);
+    }
+  }
+
   async function submitCode(code) {
     code = String(code || '').trim();
     if (!code || busy) return;
@@ -192,6 +218,7 @@ function isConfigured() {
           res.code,
           res.message + ' Dòng ' + res.row + '.'
         );
+
       } else {
         showResult('no', 'KHÔNG', res.code || code, res.message);
       }
@@ -236,6 +263,12 @@ function isConfigured() {
 
           lastScan = code;
           lastScanAt = now;
+
+          // Đã nhận diện QR: phát tiếng tít và tắt camera ngay.
+          playBeep();
+          stopScan();
+
+          // Sau đó gửi mã sang Apps Script để kiểm kê.
           submitCode(code);
         },
         () => {}
