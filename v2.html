@@ -86,8 +86,7 @@
     <section class="card">
       <strong>Cách hoạt động</strong>
       <p class="muted">
-        Ứng dụng đối chiếu 10 ký tự đầu tiên của mã QR với cột A và không phân biệt chữ hoa/chữ thường. Khi tìm thấy, ứng dụng ghi “Có” vào cột B, thời gian quét vào cột C và liên kết Google Maps vào cột D cùng dòng.
-        Nếu không tìm thấy mã, Google Sheet không bị thay đổi.
+        Ứng dụng đối chiếu 10 ký tự đầu tiên của mã QR với 10 ký tự đầu tiên của cột A và không phân biệt chữ hoa/chữ thường. Khi tìm thấy, ứng dụng ghi “Có” vào cột B, thời gian quét vào cột C và liên kết Google Maps vào cột D cùng dòng. Nếu không tìm thấy mã, Google Sheet không bị thay đổi.
       </p>
     </section>
   </div>
@@ -153,7 +152,7 @@ function isConfigured() {
     });
   }
 
-  function callAppsScript(code, scanTime, location) {
+  function callAppsScript(code, locationData) {
     return new Promise((resolve, reject) => {
       if (!isConfigured()) {
         reject(new Error('Chưa cấu hình WEB_APP_URL trong file HTML.'));
@@ -183,13 +182,14 @@ function isConfigured() {
         reject(new Error('Không kết nối được Apps Script Web App.'));
       };
 
+      const lat = locationData && locationData.lat !== undefined ? locationData.lat : '';
+      const lng = locationData && locationData.lng !== undefined ? locationData.lng : '';
       const sep = WEB_APP_URL.includes('?') ? '&' : '?';
       script.src = WEB_APP_URL + sep
         + 'action=check'
         + '&code=' + encodeURIComponent(code)
-        + '&scanTime=' + encodeURIComponent(scanTime)
-        + '&lat=' + encodeURIComponent(location.lat || '')
-        + '&lng=' + encodeURIComponent(location.lng || '')
+        + '&lat=' + encodeURIComponent(lat)
+        + '&lng=' + encodeURIComponent(lng)
         + '&callback=' + encodeURIComponent(callbackName)
         + '&_=' + Date.now();
 
@@ -229,12 +229,11 @@ function isConfigured() {
 
     input.value = code;
     setBusy(true);
-    showResult('warn', 'ĐANG KIỂM TRA...', code, 'Đang lấy vị trí và cập nhật Google Sheet.');
+    showResult('warn', 'ĐANG KIỂM TRA...', code, 'Đang cập nhật Google Sheet.');
 
     try {
-      const scanTime = Date.now();
-      const location = await getLocation();
-      const res = await callAppsScript(code, scanTime, location);
+      const locationData = await getLocation();
+      const res = await callAppsScript(code, locationData);
 
       if (!res || res.ok === false) {
         showResult('no', 'LỖI', code, (res && res.message) || 'Apps Script trả về lỗi.');
